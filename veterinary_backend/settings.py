@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 import environ
+import resend
 
 env = environ.Env()
 environ.Env.read_env()
@@ -21,6 +22,8 @@ environ.Env.read_env()
 load_dotenv()
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+
+resend.api_key = RESEND_API_KEY
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -53,6 +56,7 @@ INSTALLED_APPS = [
     "graphql_jwt",
     'django_celery_beat',
     'graphql_jwt.refresh_token.apps.RefreshTokenConfig',
+    'drf_yasg',
 
 ]
 

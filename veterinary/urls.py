@@ -11,6 +11,7 @@ from .views import (
     MessageMarkAsReadView,
     ScheduleListView,
     PetListView,
+    SendEmailReminderView,
 )
 
 urlpatterns = [
@@ -23,4 +24,5 @@ urlpatterns = [
     path('schedule/', ScheduleListView.as_view(), name='schedule-list'),
     path('pets/', PetListView.as_view(), name='pets-list'),
     path('graphql/', csrf_exempt(GraphQLView.as_view(graphiql=True, schema=schema)), name='graphql'),
+    path('send-appointment-reminder/', SendEmailReminderView.as_view(), name='send_appointment_reminder'),
 ]

@@ -9,7 +9,7 @@ class User(AbstractUser):
         ('receptionist', 'Receptionist'),
         ('owner', 'Pet Owner'),
     ]
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    role = models.CharField(max_length=100, choices=ROLE_CHOICES)
 
     # Agregar related_name único para evitar conflictos
     groups = models.ManyToManyField(

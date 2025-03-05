@@ -4,13 +4,11 @@ from .models import User, Pet, Appointments, Messages, Schedule
 from graphql_jwt.decorators import login_required
 import graphql_jwt
 from django.contrib.auth import get_user_model
-from django.conf import settings
-from celery import shared_task
-import requests
-import graphene
 from graphene.types.datetime import DateTime
+from graphql import GraphQLError
 
 
+# Definición de tipos para GraphQL
 class UserType(DjangoObjectType):
     class Meta:
         model = User
@@ -43,21 +41,7 @@ class ScheduleType(DjangoObjectType):
         fields = ("id", "veterinarian", "day", "start_time", "end_time")
 
 
-@shared_task
-def send_email_reminder(email, pet_name, appointment_date):
-    api_key = settings.RESEND_API_KEY
-    url = "https://api.resend.com/emails"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    data = {
-        "from": "clinic@yourdomain.com",
-        "to": email,
-        "subject": "Appointment Reminder",
-        "text": f"Hello,\n\nThis is a reminder that your pet {pet_name} has an appointment on {appointment_date}.\n\nBest regards,\nYour Veterinary Clinic"
-    }
-    response = requests.post(url, json=data, headers=headers)
-    return response.json()
-
-
+# Mutaciones
 class CreateOwner(graphene.Mutation):
     class Arguments:
         username = graphene.String(required=True)
@@ -71,7 +55,7 @@ class CreateOwner(graphene.Mutation):
     def mutate(self, info, username, email, first_name, last_name):
         user = info.context.user
         if user.role != 'receptionist':
-            raise Exception("Only receptionists can create owners.")
+            raise GraphQLError("Only receptionists can create owners.")
         owner = User(username=username, email=email, first_name=first_name, last_name=last_name, role='owner')
         owner.set_password("defaultpassword")
         owner.save()
@@ -91,14 +75,14 @@ class CreatePet(graphene.Mutation):
     def mutate(self, info, name, breed, age, owner_id):
         user = info.context.user
         if user.role != 'receptionist':
-            raise Exception("Only receptionists can create pets.")
-        owner = User.objects.get(id=owner_id, role='owner')
+            raise GraphQLError("Only receptionists can create pets.")
+        try:
+            owner = User.objects.get(id=owner_id, role='owner')
+        except User.DoesNotExist:
+            raise GraphQLError("Owner not found.")
         pet = Pet(name=name, breed=breed, age=age, owner=owner)
         pet.save()
         return CreatePet(pet=pet)
-
-
-from graphql import GraphQLError
 
 
 class CreateAppointment(graphene.Mutation):
@@ -113,26 +97,19 @@ class CreateAppointment(graphene.Mutation):
     @login_required
     def mutate(self, info, pet_id, veterinarian_id, date, reason):
         user = info.context.user
-        print(f"Usuario autenticado: {user.username}")  # Depuración
-        print(f"Rol del usuario: {user.role}")  # Depuración
-
-        # Verifica que el usuario sea un dueño (owner)
         if user.role != 'owner':
             raise GraphQLError("Only owners can create appointments.")
 
         try:
-            # Verifica que la mascota exista y pertenezca al usuario
             pet = Pet.objects.get(id=pet_id, owner=user)
         except Pet.DoesNotExist:
             raise GraphQLError("Pet not found or does not belong to the user.")
 
         try:
-            # Verifica que el veterinario exista y tenga el rol correcto
             veterinarian = User.objects.get(id=veterinarian_id, role='vet')
         except User.DoesNotExist:
             raise GraphQLError("Veterinarian not found or does not have the correct role.")
 
-        # Crea la cita
         appointment = Appointments(
             pet=pet,
             veterinarian=veterinarian,
@@ -145,6 +122,7 @@ class CreateAppointment(graphene.Mutation):
         return CreateAppointment(appointment=appointment)
 
 
+# Autenticación con JWT
 class TokenAuthMutation(graphene.ObjectType):
     token_auth = graphql_jwt.ObtainJSONWebToken.Field()
     verify_token = graphql_jwt.Verify.Field()
@@ -157,6 +135,7 @@ class Mutation(TokenAuthMutation, graphene.ObjectType):
     create_appointment = CreateAppointment.Field()
 
 
+# Queries
 class Query(graphene.ObjectType):
     all_pets = graphene.List(PetType)
     all_appointments = graphene.List(AppointmentType)
@@ -168,7 +147,9 @@ class Query(graphene.ObjectType):
         user = info.context.user
         if user.role == 'owner':
             return Pet.objects.filter(owner=user)
-        return Pet.objects.all()
+        elif user.role == 'receptionist' or user.role == 'admin':
+            return Pet.objects.all()
+        return []
 
     @login_required
     def resolve_all_appointments(self, info):
@@ -177,7 +158,9 @@ class Query(graphene.ObjectType):
             return Appointments.objects.filter(veterinarian=user)
         elif user.role == 'owner':
             return Appointments.objects.filter(pet__owner=user)
-        return Appointments.objects.all()
+        elif user.role in ['admin', 'receptionist']:
+            return Appointments.objects.all()
+        return []
 
     @login_required
     def resolve_all_messages(self, info):
@@ -186,7 +169,7 @@ class Query(graphene.ObjectType):
             return Messages.objects.filter(veterinarian=user)
         elif user.role == 'owner':
             return Messages.objects.filter(owner=user)
-        return Messages.objects.all()
+        return []
 
     @login_required
     def resolve_all_schedules(self, info):
@@ -196,4 +179,5 @@ class Query(graphene.ObjectType):
         return Schedule.objects.all()
 
 
+# Esquema GraphQL
 schema = graphene.Schema(query=Query, mutation=Mutation)

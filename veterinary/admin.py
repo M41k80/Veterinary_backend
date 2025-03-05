@@ -1,10 +1,21 @@
+# admin.py
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin
 from .models import User, Pet, Appointments, Messages, Schedule
+from .forms import CustomUserCreationForm
 
 
 @admin.register(User)
-class VeterinarianAdmin(admin.ModelAdmin):
+class VeterinarianAdmin(UserAdmin):
+    add_form = CustomUserCreationForm  # Usamos el formulario personalizado para la creación
+    form = CustomUserCreationForm  # Usamos el mismo formulario para la edición
     list_display = ('id', 'username', 'first_name', 'last_name', 'email', 'role')
+    fieldsets = UserAdmin.fieldsets  # Usamos los fieldsets predeterminados
+    add_fieldsets = (
+        (None, {
+            'fields': ('username', 'password1', 'password2', 'first_name', 'last_name', 'email', 'role')
+        }),
+    )
 
 
 @admin.register(Pet)
@@ -25,4 +36,3 @@ def mark_as_read(request, queryset):
 class MessagesAdmin(admin.ModelAdmin):
     list_display = ('id', 'owner', 'veterinarian', 'content', 'timestamp', 'is_read')
     actions = ['mark_as_read']
-
