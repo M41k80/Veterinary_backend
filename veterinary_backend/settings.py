@@ -11,10 +11,19 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+import environ
+
+env = environ.Env()
+environ.Env.read_env()
+
+load_dotenv()
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
@@ -26,7 +35,6 @@ SECRET_KEY = 'django-insecure-8(kco(n9*6fo+1mys9abs(7sswul_k05bk6cdld3w8j9li6u3z
 DEBUG = True
 
 ALLOWED_HOSTS = []
-
 
 # Application definition
 
@@ -43,12 +51,13 @@ INSTALLED_APPS = [
     'corsheaders',
     'graphene_django',
     "graphql_jwt",
+    'django_celery_beat',
+    'graphql_jwt.refresh_token.apps.RefreshTokenConfig',
 
 ]
 
-
 GRAPHENE = {
-    "SCHEMA": "tu_app.schema.schema",
+    "SCHEMA": "veterinary.schema.schema",
     "MIDDLEWARE": [
         "graphql_jwt.middleware.JSONWebTokenMiddleware",
     ],
@@ -58,7 +67,6 @@ AUTHENTICATION_BACKENDS = [
     "graphql_jwt.backends.JSONWebTokenBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
-
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -90,22 +98,19 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'veterinary_backend.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'tu_base_de_datos',
-        'USER': 'tu_usuario',
-        'PASSWORD': 'tu_contraseña',
-        'HOST': 'localhost',  # O la IP del servidor
-        'PORT': '5432',
+        'NAME': env('DB_NAME'),
+        'USER': env('DB_USER'),
+        'PASSWORD': env('DB_PASSWORD'),
+        'HOST': env('DB_HOST', default='localhost'),
+        'PORT': env('DB_PORT', default='5432'),
     }
 }
-
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -125,7 +130,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 
@@ -136,7 +140,6 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
-
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
@@ -157,7 +160,9 @@ REST_FRAMEWORK = {
     ],
 }
 
-TWILIO_ACCOUNT_SID = 'tu_sid'
-TWILIO_AUTH_TOKEN = 'tu_token'
-TWILIO_PHONE_NUMBER = 'tu_numero_twilio'
+# Configuración de Celery
+CELERY_BROKER_URL = 'redis://localhost:6379/0'  # Usa Redis como broker
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
 
+AUTH_USER_MODEL = 'veterinary.User'

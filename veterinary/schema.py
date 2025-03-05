@@ -4,6 +4,11 @@ from .models import User, Pet, Appointments, Messages, Schedule
 from graphql_jwt.decorators import login_required
 import graphql_jwt
 from django.contrib.auth import get_user_model
+from django.conf import settings
+from celery import shared_task
+import requests
+import graphene
+from graphene.types.datetime import DateTime
 
 
 class UserType(DjangoObjectType):
@@ -19,6 +24,8 @@ class PetType(DjangoObjectType):
 
 
 class AppointmentType(DjangoObjectType):
+    date = DateTime()
+
     class Meta:
         model = Appointments
         fields = ("id", "pet", "veterinarian", "date", "reason", "status", "notes")
@@ -34,6 +41,21 @@ class ScheduleType(DjangoObjectType):
     class Meta:
         model = Schedule
         fields = ("id", "veterinarian", "day", "start_time", "end_time")
+
+
+@shared_task
+def send_email_reminder(email, pet_name, appointment_date):
+    api_key = settings.RESEND_API_KEY
+    url = "https://api.resend.com/emails"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    data = {
+        "from": "clinic@yourdomain.com",
+        "to": email,
+        "subject": "Appointment Reminder",
+        "text": f"Hello,\n\nThis is a reminder that your pet {pet_name} has an appointment on {appointment_date}.\n\nBest regards,\nYour Veterinary Clinic"
+    }
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
 
 
 class CreateOwner(graphene.Mutation):
@@ -67,10 +89,16 @@ class CreatePet(graphene.Mutation):
 
     @login_required
     def mutate(self, info, name, breed, age, owner_id):
+        user = info.context.user
+        if user.role != 'receptionist':
+            raise Exception("Only receptionists can create pets.")
         owner = User.objects.get(id=owner_id, role='owner')
         pet = Pet(name=name, breed=breed, age=age, owner=owner)
         pet.save()
         return CreatePet(pet=pet)
+
+
+from graphql import GraphQLError
 
 
 class CreateAppointment(graphene.Mutation):
@@ -84,73 +112,37 @@ class CreateAppointment(graphene.Mutation):
 
     @login_required
     def mutate(self, info, pet_id, veterinarian_id, date, reason):
-        pet = Pet.objects.get(id=pet_id)
-        veterinarian = User.objects.get(id=veterinarian_id, role='vet')
-        appointment = Appointments(pet=pet, veterinarian=veterinarian, date=date, reason=reason, status='pending')
+        user = info.context.user
+        print(f"Usuario autenticado: {user.username}")  # Depuración
+        print(f"Rol del usuario: {user.role}")  # Depuración
+
+        # Verifica que el usuario sea un dueño (owner)
+        if user.role != 'owner':
+            raise GraphQLError("Only owners can create appointments.")
+
+        try:
+            # Verifica que la mascota exista y pertenezca al usuario
+            pet = Pet.objects.get(id=pet_id, owner=user)
+        except Pet.DoesNotExist:
+            raise GraphQLError("Pet not found or does not belong to the user.")
+
+        try:
+            # Verifica que el veterinario exista y tenga el rol correcto
+            veterinarian = User.objects.get(id=veterinarian_id, role='vet')
+        except User.DoesNotExist:
+            raise GraphQLError("Veterinarian not found or does not have the correct role.")
+
+        # Crea la cita
+        appointment = Appointments(
+            pet=pet,
+            veterinarian=veterinarian,
+            date=date,
+            reason=reason,
+            status='pending'
+        )
         appointment.save()
+
         return CreateAppointment(appointment=appointment)
-
-
-class UpdateAppointmentStatus(graphene.Mutation):
-    class Arguments:
-        appointment_id = graphene.Int(required=True)
-        status = graphene.String(required=True)
-
-    appointment = graphene.Field(AppointmentType)
-
-    @login_required
-    def mutate(self, info, appointment_id, status):
-        appointment = Appointments.objects.get(id=appointment_id)
-        appointment.status = status
-        appointment.save()
-        return UpdateAppointmentStatus(appointment=appointment)
-
-
-class SendMessage(graphene.Mutation):
-    class Arguments:
-        owner_id = graphene.Int(required=True)
-        veterinarian_id = graphene.Int(required=True)
-        content = graphene.String(required=True)
-
-    message = graphene.Field(MessageType)
-
-    @login_required
-    def mutate(self, info, owner_id, veterinarian_id, content):
-        owner = User.objects.get(id=owner_id, role='owner')
-        veterinarian = User.objects.get(id=veterinarian_id, role='vet')
-        message = Messages(owner=owner, veterinarian=veterinarian, content=content)
-        message.save()
-        return SendMessage(message=message)
-
-
-class MarkMessageAsRead(graphene.Mutation):
-    class Arguments:
-        message_id = graphene.Int(required=True)
-
-    message = graphene.Field(MessageType)
-
-    @login_required
-    def mutate(self, info, message_id):
-        message = Messages.objects.get(id=message_id)
-        message.mark_as_read()
-        return MarkMessageAsRead(message=message)
-
-
-class ManageSchedule(graphene.Mutation):
-    class Arguments:
-        veterinarian_id = graphene.Int(required=True)
-        day = graphene.String(required=True)
-        start_time = graphene.String(required=True)
-        end_time = graphene.String(required=True)
-
-    schedule = graphene.Field(ScheduleType)
-
-    @login_required
-    def mutate(self, info, veterinarian_id, day, start_time, end_time):
-        veterinarian = User.objects.get(id=veterinarian_id, role='vet')
-        schedule = Schedule(veterinarian=veterinarian, day=day, start_time=start_time, end_time=end_time)
-        schedule.save()
-        return ManageSchedule(schedule=schedule)
 
 
 class TokenAuthMutation(graphene.ObjectType):
@@ -163,10 +155,6 @@ class Mutation(TokenAuthMutation, graphene.ObjectType):
     create_owner = CreateOwner.Field()
     create_pet = CreatePet.Field()
     create_appointment = CreateAppointment.Field()
-    update_appointment_status = UpdateAppointmentStatus.Field()
-    send_message = SendMessage.Field()
-    mark_message_as_read = MarkMessageAsRead.Field()
-    manage_schedule = ManageSchedule.Field()
 
 
 class Query(graphene.ObjectType):
@@ -176,14 +164,14 @@ class Query(graphene.ObjectType):
     all_schedules = graphene.List(ScheduleType)
 
     @login_required
-    def resolve_all_pets(root, info):
+    def resolve_all_pets(self, info):
         user = info.context.user
         if user.role == 'owner':
             return Pet.objects.filter(owner=user)
         return Pet.objects.all()
 
     @login_required
-    def resolve_all_appointments(root, info):
+    def resolve_all_appointments(self, info):
         user = info.context.user
         if user.role == 'vet':
             return Appointments.objects.filter(veterinarian=user)
@@ -192,7 +180,7 @@ class Query(graphene.ObjectType):
         return Appointments.objects.all()
 
     @login_required
-    def resolve_all_messages(root, info):
+    def resolve_all_messages(self, info):
         user = info.context.user
         if user.role == 'vet':
             return Messages.objects.filter(veterinarian=user)
@@ -201,7 +189,7 @@ class Query(graphene.ObjectType):
         return Messages.objects.all()
 
     @login_required
-    def resolve_all_schedules(root, info):
+    def resolve_all_schedules(self, info):
         user = info.context.user
         if user.role == 'vet':
             return Schedule.objects.filter(veterinarian=user)
